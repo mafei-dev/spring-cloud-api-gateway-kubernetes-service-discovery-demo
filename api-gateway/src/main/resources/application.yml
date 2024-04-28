@@ -1,0 +1,41 @@
+server:
+  port: 8080
+management:
+  info:
+    env:
+      enabled: true
+  endpoints:
+    web:
+      exposure:
+        include: "*"
+info:
+  app:
+    author: mafei
+    name: ${spring.application.name}
+    version: 1.0.0
+spring:
+  application:
+    name: api-gateway
+  cloud:
+
+    gateway:
+      routes:
+        - id: api-user-service
+          uri: http://user-service
+          predicates:
+            - Path=/api/user-service/**
+          filters:
+            - RewritePath=/api/user-service/?(?<segment>.*), /$\{segment}
+          order: 0
+        - id: api-order-service
+          uri: http://order-service
+          predicates:
+            - Path=/api/order-service/**
+          filters:
+            - RewritePath=/api/order-service/?(?<segment>.*), /$\{segment}
+          order: 1
+logging:
+  level:
+    root: debug
+    org:
+      spring: debug

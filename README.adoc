@@ -1,0 +1,243 @@
+= Spring cloud Api Gateway With Kubernetes Service Discovery Demo
+
+This demonstrates how spring cloud api gateway is configured
+without using any Discovery client like Eureka or spring-cloud-starter-kubernetes-discoveryclient in kubernetes environment.
+
+The sample request goes through `api-gateway`
+and then route the request to the `order-service` and order service call the `user-service` internally to build the order-detail.
+
+. link:./api-gateway[api-gateway]
+. link:./order-service/[order-service]
+. link:./user-service/[user-service]
+
+api-gateway - link:api-gateway/src/main/resources/application.yml[application.yml] for roting the request.
+
+[source,yaml]
+----
+server:
+  port: 8080
+management:
+  info:
+    env:
+      enabled: true
+  endpoints:
+    web:
+      exposure:
+        include: "*"
+info:
+  app:
+    author: mafei
+    name: ${spring.application.name}
+    version: 1.0.0
+spring:
+  application:
+    name: api-gateway
+  cloud:
+
+    gateway:
+      routes:
+        - id: api-user-service
+          uri: http://user-service
+          predicates:
+            - Path=/api/user-service/**
+          filters:
+            - RewritePath=/api/user-service/?(?<segment>.*), /$\{segment}
+          order: 0
+        - id: api-order-service
+          uri: http://order-service
+          predicates:
+            - Path=/api/order-service/**
+          filters:
+            - RewritePath=/api/order-service/?(?<segment>.*), /$\{segment}
+          order: 1
+logging:
+  level:
+    root: debug
+    org:
+      spring: debug
+----
+
+=== Create docker files for each service.
+
+. link:./api-gateway/Dockerfile[api-gateway Dockerfile]
+. link:./order-service/Dockerfile[order-service Dockerfile]
+. link:./user-service/Dockerfile[user-service Dockerfile]
+
+=== build and push the images into docker-hub.
+
+. build and push api-gateway image by using link:api-gateway/docker-push.sh[api-gateway/docker-push.sh] file.
++
+[source,shell]
+----
+./mvnw clean package -DskipTests=true
+docker build -t mafeidev/spring-cloud-api-gateway-k8s-dns-demo-api-gateway:1.0.1 .
+docker push mafeidev/spring-cloud-api-gateway-k8s-dns-demo-api-gateway:1.0.1
+----
+. build and push user-service image by using link:user-service/docker-push.sh[user-service/docker-push.sh] file.
++
+[source,shell]
+----
+./mvnw clean package -DskipTests=true
+docker build -t mafeidev/spring-cloud-api-gateway-k8s-dns-demo-user-service:1.0.0 .
+docker push mafeidev/spring-cloud-api-gateway-k8s-dns-demo-user-service:1.0.0
+----
+. build and push order-service image by using link:order-service/docker-push.sh[order-service/docker-push.sh] file.
++
+[source,shell]
+----
+./mvnw clean package -DskipTests=true
+docker build -t mafeidev/spring-cloud-api-gateway-k8s-dns-demo-order-service:1.0.0 .
+docker push mafeidev/spring-cloud-api-gateway-k8s-dns-demo-order-service:1.0.0
+----
+
+=== Kubernetes manifest files.
+
+. api-gateway's link:k8s/api-gateway-deployment.yaml[Deployment and Service manifest files]
++
+[source,yaml]
+----
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+spec:
+  selector:
+    matchLabels:
+      app: api-gateway
+  template:
+    metadata:
+      labels:
+        app: api-gateway
+    spec:
+      containers:
+        - name: api-gateway
+          image: mafeidev/spring-cloud-api-gateway-k8s-dns-demo-api-gateway:1.0.5
+          ports:
+            - containerPort: 8080
+          env:
+            - name: SERVER_UNDERTOW_ALWAYS_SET_KEEP_ALIVE
+              value: "false"
+
+---
+# NodePort is used as the service type due to access from the external. (port: 30000)
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-gateway
+spec:
+  type: NodePort
+  selector:
+    app: api-gateway
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8080
+      nodePort: 30000
+  sessionAffinity: None
+----
+
+. user-service's link:k8s/user-service-deployment.yaml[Deployment and Service manifest files]
++
+[source,yaml]
+----
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: user-service
+  template:
+    metadata:
+      labels:
+        app: user-service
+    spec:
+      containers:
+        - name: user-service
+          image: mafeidev/spring-cloud-api-gateway-k8s-dns-demo-user-service:1.0.0
+          ports:
+            - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: user-service
+spec:
+  selector:
+    app: user-service
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8080
+  sessionAffinity: None
+----
+
+. order-service's link:k8s/order-service-deployment.yaml[Deployment and Service manifest files]
++
+[source,yaml]
+----
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: order-service
+  template:
+    metadata:
+      labels:
+        app: order-service
+    spec:
+      containers:
+        - name: order-service
+          image: mafeidev/spring-cloud-api-gateway-k8s-dns-demo-order-service:1.0.0
+          ports:
+            - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: order-service
+spec:
+  selector:
+    app: order-service
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8080
+  sessionAffinity: None
+----
+
+Apply the manifest to cluster by using link:k8s/k8s-apply.sh[k8s-apply.sh file].
+
+[source,shell]
+----
+kubectl apply -f user-service-deployment.yaml
+kubectl apply -f order-service-deployment.yaml
+kubectl apply -f api-gateway-deployment.yaml
+----
+
+Finally, test the API with the port that was used nodePort (30000) with your public ip (if in a managed k8s cluster) or local cluster id (if local).
+
+[source,shell]
+----
+curl http://localhost:30000/api/order-service/orders
+----
+
+The repose will be like below.
+
+[source,json]
+----
+{
+    "user_service_pod_id_service_pod": "user-service-766875fdbc-fcg2v",
+    "user": "mafei",
+    "order_id": "5b38c3fe-cac2-4af2-9982-dbadabde9c22",
+    "order_service_pod_id": "order-service-6c88bf596-lwt54"
+}
+----
+
+IMPORTANT: To very the load balancing from the `api-gateway` to `order-service` and `order-service` to `user-service`, you can see each pod id (`user_service_pod_id_service_pod` and `order_service_pod_id`) that request goes through.

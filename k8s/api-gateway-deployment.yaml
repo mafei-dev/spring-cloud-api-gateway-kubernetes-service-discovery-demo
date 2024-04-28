@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+spec:
+  selector:
+    matchLabels:
+      app: api-gateway
+  template:
+    metadata:
+      labels:
+        app: api-gateway
+    spec:
+      containers:
+        - name: api-gateway
+          image: mafeidev/spring-cloud-api-gateway-k8s-dns-demo-api-gateway:1.0.5
+          ports:
+            - containerPort: 8080
+          env:
+            - name: SERVER_UNDERTOW_ALWAYS_SET_KEEP_ALIVE
+              value: "false"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-gateway
+spec:
+  type: NodePort
+  selector:
+    app: api-gateway
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8080
+      nodePort: 30000
+  sessionAffinity: None
